@@ -69,12 +69,40 @@ function shouldUseContext(question) {
   return DOCUMENT_KEYWORDS.some(k => qLower.includes(k.toLowerCase()));
 }
 
+// --- Definición centralizada de funciones ---
+const funciones = [
+  {
+    name: "saluda",
+    keywords: ["saludame", "hola"],
+    execute: () => "¡Hola Pablo! Encantado de saludarte 😊"
+  },
+  {
+    name: "tiempo",
+    keywords: ["tiempo", "clima"],
+    execute: () => "El tiempo en Badajoz es soleado con 25°C. Si me equivoco, mira por la ventana 😉"
+  }
+  // Aquí puedes añadir más funciones fácilmente
+];
+
+function detectFunction(message) {
+  const msgLower = message.toLowerCase();
+  return funciones.find(fn => fn.keywords.some(k => msgLower.includes(k)));
+}
+
 app.post("/api/chat", async (req, res) => {
   const { messages = [] } = req.body;
 
   try {
     const lastUserMessage = messages.filter(m => m.role === "user").slice(-1)[0]?.content || "";
 
+    // --- Detectar si alguna función aplica ---
+    const fn = detectFunction(lastUserMessage);
+    if (fn) {
+      const respuesta = fn.execute();
+      return res.json({ text: respuesta });
+    }
+
+    // --- Lógica normal de embeddings y OpenAI ---
     let context = "";
     if (shouldUseContext(lastUserMessage)) {
       const qEmbedding = await client.embeddings.create({
@@ -116,6 +144,7 @@ app.post("/api/chat", async (req, res) => {
     const data = await response.json();
     const text = data?.output?.[0]?.content?.[0]?.text || "No se recibió respuesta.";
     res.json({ text });
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
