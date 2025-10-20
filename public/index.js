@@ -7,19 +7,15 @@ document.getElementById("enviar").addEventListener("click", async () => {
 
   if (!pregunta) return;
 
-  // Mostrar preguntas del usuario
   div.innerHTML += `<div class="mensaje usuario">${pregunta}</div>`;
   div.scrollTop = div.scrollHeight;
   input.value = "";
 
-  // Mostrar mensajes de carga
   const thinkingDiv = document.createElement("div");
   thinkingDiv.className = "mensaje ia";
-  thinkingDiv.textContent = "Pensando...";
   div.appendChild(thinkingDiv);
   div.scrollTop = div.scrollHeight;
 
-  // Añadir al historial
   historial.push({ role: "user", content: pregunta });
 
   try {
@@ -29,11 +25,57 @@ document.getElementById("enviar").addEventListener("click", async () => {
       body: JSON.stringify({ messages: historial }),
     });
 
-    const data = await res.json();
-    const respuesta = data.text || "Error al obtener respuesta";
+    const contentType = res.headers.get("content-type") || "";
 
-    thinkingDiv.textContent = respuesta;
-    historial.push({ role: "assistant", content: respuesta });
+    if (contentType.includes("application/json")) {
+      const data = await res.json();
+      thinkingDiv.textContent = data.text;
+      historial.push({ role: "assistant", content: data.text });
+      return;
+    }
+
+    // --- Streaming robusto ---
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+    let respuestaCompleta = "";
+    let ultimoChar = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        let fragment = line.slice(5).trim();
+        if (fragment === "[DONE]") continue;
+
+        // Saltos de línea
+        fragment = fragment.replace(/###/g, "\n");
+        
+        if (ultimoChar && /[a-zA-Z0-9áéíóúñ]/.test(ultimoChar) && /^[a-zA-Z0-9áéíóúñ]/.test(fragment[0])) {
+          fragment = " " + fragment;
+        }
+
+        // Añadir espacio después de puntuación si hace falta
+        if (respuestaCompleta && /[.,;!?]$/.test(respuestaCompleta) && fragment[0] && !/[\s\n]/.test(fragment[0])) {
+          fragment = " " + fragment;
+        }
+
+        // Concatenar fragmento completo
+        thinkingDiv.textContent += fragment;
+        ultimoChar = fragment.slice(-1);
+        respuestaCompleta += fragment;
+        div.scrollTop = div.scrollHeight;
+      }
+    }
+
+    historial.push({ role: "assistant", content: respuestaCompleta });
+    console.log("Respuesta completa:", respuestaCompleta);
 
   } catch (error) {
     thinkingDiv.textContent = "Error al conectar con el servidor";
