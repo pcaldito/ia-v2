@@ -96,7 +96,7 @@ async function enviarMensaje() {
           fragment = " " + fragment;
         }
 
-        if (respuestaCompleta && /[.,;!?]$/.test(respuestaCompleta) && fragment[0] && !/[\s\n]/.test(fragment[0])) {
+        if (respuestaCompleta && /[.,;:!¡¿?""'*+-]$/.test(respuestaCompleta) && fragment[0] && !/[\s\n]/.test(fragment[0])) {
           fragment = " " + fragment;
         }
 
