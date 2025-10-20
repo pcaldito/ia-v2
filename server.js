@@ -25,7 +25,7 @@ function cosineSimilarity(a, b) {
 
 const VECTOR_FILE = "./vectorStore.json";
 
-async function loadDocuments() {
+async function cargarDocumentos() {
   if (fs.existsSync(VECTOR_FILE)) {
     vectorStore = JSON.parse(fs.readFileSync(VECTOR_FILE, "utf-8"));
     return;
@@ -56,7 +56,7 @@ async function loadDocuments() {
   fs.writeFileSync(VECTOR_FILE, JSON.stringify(vectorStore));
 }
 
-await loadDocuments();
+await cargarDocumentos();
 
 const DOCUMENT_KEYWORDS = [
   "arquitectura", "gótica",
@@ -64,7 +64,7 @@ const DOCUMENT_KEYWORDS = [
   "league of legends", "lol", "tft", "builds", "campeones"
 ];
 
-function shouldUseContext(question) {
+function conversacion(question) {
   const qLower = question.toLowerCase();
   return DOCUMENT_KEYWORDS.some(k => qLower.includes(k.toLowerCase()));
 }
@@ -93,10 +93,10 @@ app.post("/api/chat", async (req, res) => {
   const { messages = [] } = req.body;
 
   try {
-    const lastUserMessage = messages.filter(m => m.role === "user").slice(-1)[0]?.content || "";
+    const ultimoMensaje = messages.filter(m => m.role === "user").slice(-1)[0]?.content || "";
 
     // --- Detectar si alguna función aplica ---
-    const fn = detectFunction(lastUserMessage);
+    const fn = detectFunction(ultimoMensaje);
     if (fn) {
       const respuesta = fn.execute();
       return res.json({ text: respuesta });
@@ -104,10 +104,10 @@ app.post("/api/chat", async (req, res) => {
 
     // --- Lógica normal de embeddings y OpenAI ---
     let context = "";
-    if (shouldUseContext(lastUserMessage)) {
+    if (conversacion(ultimoMensaje)) {
       const qEmbedding = await client.embeddings.create({
         model: "text-embedding-3-small",
-        input: lastUserMessage,
+        input: ultimoMensaje,
       });
       const queryVector = qEmbedding.data[0].embedding;
 
@@ -151,4 +151,4 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
-app.listen(3000, () => console.log("✅ Servidor activo en http://localhost:3000"));
+app.listen(3000, () => console.log("Servidor activo en http://localhost:3000"));

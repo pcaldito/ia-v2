@@ -7,12 +7,12 @@ document.getElementById("enviar").addEventListener("click", async () => {
 
   if (!pregunta) return;
 
-  // Mostrar pregunta del usuario
+  // Mostrar preguntas del usuario
   div.innerHTML += `<div class="mensaje usuario">${pregunta}</div>`;
   div.scrollTop = div.scrollHeight;
   input.value = "";
 
-  // Mostrar mensaje de carga
+  // Mostrar mensajes de carga
   const thinkingDiv = document.createElement("div");
   thinkingDiv.className = "mensaje ia";
   thinkingDiv.textContent = "Pensando...";
