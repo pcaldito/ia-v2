@@ -1,10 +1,45 @@
 let historial = [];
 
-document.getElementById("enviar").addEventListener("click", async () => {
-  const input = document.getElementById("chati");
-  const pregunta = input.value.trim();
-  const div = document.getElementById("respuesta");
+// --- Referencias ---
+const input = document.getElementById("chati");
+const div = document.getElementById("respuesta");
+const enviarBtn = document.getElementById("enviar");
+const micBtn = document.getElementById("mic");
 
+// --- Configurar reconocimiento de voz ---
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition;
+if (SpeechRecognition) {
+  recognition = new SpeechRecognition();
+  recognition.lang = 'es-ES';
+  recognition.interimResults = false;
+  recognition.continuous = false;
+
+  recognition.onstart = () => micBtn.classList.add("listening");
+  recognition.onend = () => micBtn.classList.remove("listening");
+
+  recognition.onresult = (event) => {
+    const transcript = Array.from(event.results)
+      .map(result => result[0].transcript)
+      .join('');
+    input.value = transcript;
+    enviarMensaje();
+  };
+
+  recognition.onerror = (e) => console.error("Error micrófono:", e.error);
+}
+
+// --- Botón micrófono ---
+micBtn.addEventListener("click", () => {
+  if (recognition) recognition.start();
+});
+
+// --- Botón enviar ---
+enviarBtn.addEventListener("click", () => enviarMensaje());
+
+// --- Función enviar mensaje (tu código streaming intacto) ---
+async function enviarMensaje() {
+  const pregunta = input.value.trim();
   if (!pregunta) return;
 
   div.innerHTML += `<div class="mensaje usuario">${pregunta}</div>`;
@@ -61,12 +96,10 @@ document.getElementById("enviar").addEventListener("click", async () => {
           fragment = " " + fragment;
         }
 
-        // Añadir espacio después de puntuación si hace falta
         if (respuestaCompleta && /[.,;!?]$/.test(respuestaCompleta) && fragment[0] && !/[\s\n]/.test(fragment[0])) {
           fragment = " " + fragment;
         }
 
-        // Concatenar fragmento completo
         thinkingDiv.textContent += fragment;
         ultimoChar = fragment.slice(-1);
         respuestaCompleta += fragment;
@@ -83,4 +116,4 @@ document.getElementById("enviar").addEventListener("click", async () => {
   }
 
   div.scrollTop = div.scrollHeight;
-});
+}
