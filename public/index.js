@@ -36,6 +36,9 @@ micBtn.addEventListener("click", () => {
 
 // --- Botón enviar ---
 enviarBtn.addEventListener("click", () => enviarMensaje());
+input.addEventListener("keypress", (e) => {
+  if (e.key === "Enter") enviarMensaje();
+});
 
 // --- Función enviar mensaje (tu código streaming intacto) ---
 async function enviarMensaje() {
