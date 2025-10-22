@@ -22,7 +22,6 @@ botonMicro.addEventListener("click", async () => {
 
       mediaRecorder.start();
       botonMicro.textContent = "Detener grabación";
-      console.log("Grabación iniciada");
     } catch (err) {
       console.error("Error accediendo al micrófono:", err);
       alert("No se pudo acceder al micrófono");
@@ -30,7 +29,6 @@ botonMicro.addEventListener("click", async () => {
   } else if (mediaRecorder.state === "recording") {
     mediaRecorder.stop();
     botonMicro.textContent = "🎤";
-    console.log("Grabación detenida");
   }
 });
 
@@ -45,20 +43,17 @@ botonEnviar.addEventListener("click", async () => {
     try {
       const resp = await fetch("/api/voz", { method: "POST", body: formData });
       if (!resp.ok) {
-        const err = await resp.json();
-        console.log("Error servidor audio:", err);
+        console.log("Error servidor audio:", await resp.json());
         return;
       }
       const data = await resp.json();
-      console.log("Transcripción recibida:", data.text);
       entrada.value = data.text;
-      audioChunks = []; // limpiar
+      audioChunks = [];
     } catch (err) {
       console.error("Error enviando audio:", err);
     }
   }
 
-  // Enviar texto al chat
   const pregunta = entrada.value.trim();
   if (!pregunta) return;
 
@@ -68,6 +63,7 @@ botonEnviar.addEventListener("click", async () => {
 
   const mensajeIA = document.createElement("div");
   mensajeIA.className = "mensaje ia";
+  mensajeIA.textContent = "Pensando...";
   contenedor.appendChild(mensajeIA);
   contenedor.scrollTop = contenedor.scrollHeight;
 
@@ -80,56 +76,12 @@ botonEnviar.addEventListener("click", async () => {
       body: JSON.stringify({ messages: historial }),
     });
 
-    const tipoContenido = respuesta.headers.get("content-type") || "";
-
-    if (tipoContenido.includes("application/json")) {
-      const data = await respuesta.json();
-      mensajeIA.textContent = data.text;
-      historial.push({ role: "assistant", content: data.text });
-      return;
-    }
-
-    // SSE streaming
-    const lector = respuesta.body.getReader();
-    const decodificador = new TextDecoder("utf-8");
-    let buffer = "";
-    let respuestaCompleta = "";
-    let ultimoCaracter = "";
-
-    while (true) {
-      const { done, value } = await lector.read();
-      if (done) break;
-
-      buffer += decodificador.decode(value, { stream: true });
-      const lineas = buffer.split("\n");
-      buffer = lineas.pop() || "";
-
-      for (const linea of lineas) {
-        if (!linea.startsWith("data:")) continue;
-        let fragmento = linea.slice(5).trim();
-        if (fragmento === "[DONE]") continue;
-
-        if (ultimoCaracter && /[a-zA-Z0-9áéíóúñ]/.test(ultimoCaracter) && /^[a-zA-Z0-9áéíóúñ]/.test(fragmento[0])) {
-          fragmento = " " + fragmento;
-        }
-
-        if (respuestaCompleta && /[.,;:!¡¿?""'*+-]$/.test(respuestaCompleta) && fragmento[0] && !/[\s\n]/.test(fragmento[0])) {
-          fragmento = " " + fragmento;
-        }
-
-        mensajeIA.textContent += fragmento;
-        ultimoCaracter = fragmento.slice(-1);
-        respuestaCompleta += fragmento;
-        contenedor.scrollTop = contenedor.scrollHeight;
-      }
-    }
-
-    historial.push({ role: "assistant", content: respuestaCompleta });
-    console.log("Respuesta completa:", respuestaCompleta);
-
-  } catch (error) {
+    const data = await respuesta.json();
+    mensajeIA.textContent = data.text;
+    historial.push({ role: "assistant", content: data.text });
+  } catch (err) {
     mensajeIA.textContent = "Error al conectar con el servidor";
-    console.error("Error:", error);
+    console.error(err);
   }
 
   contenedor.scrollTop = contenedor.scrollHeight;

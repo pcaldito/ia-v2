@@ -93,7 +93,7 @@ function detectarFuncion(mensaje) {
   return funciones.find(fn => fn.palabras.some(p => texto.includes(p)));
 }
 
-// --- Chat endpoint (streaming SSE) ---
+// --- Chat endpoint (respuesta completa) ---
 app.post("/api/chat", async (req, res) => {
   const { messages = [] } = req.body;
   const ultimoMensaje = messages.filter(m => m.role === "user").slice(-1)[0]?.content || "";
@@ -123,36 +123,16 @@ app.post("/api/chat", async (req, res) => {
     ];
     if (contexto) mensajesEntrada.push({ role: "system", content: `Información de documentos:\n${contexto}` });
 
-    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-    res.setHeader("Cache-Control", "no-cache, no-transform");
-    res.setHeader("Connection", "keep-alive");
-    res.flushHeaders && res.flushHeaders();
-
-    const stream = await client.responses.stream({
+    const respuesta = await client.responses.create({
       model: "gpt-4o-mini",
       input: mensajesEntrada
     });
 
-    for await (const evento of stream) {
-      if (evento.type === "response.output_text.delta" || evento.type === "response.refusal.delta") {
-        const texto = String(evento.delta || "").replace(/\r/g, "");
-        if (!texto) continue;
-        const lineas = texto.split("\n");
-        for (const ln of lineas) res.write(`data: ${ln}\n\n`);
-      } else if (evento.type === "response.error") {
-        const errMsg = evento.error?.message || "Error interno en el stream";
-        res.write(`data: ${errMsg}\n\n`);
-      }
-    }
-
-    res.write("data: [DONE]\n\n");
-    res.end();
+    const textoFinal = respuesta.output_text || "No se pudo generar respuesta";
+    res.json({ text: textoFinal });
 
   } catch (err) {
-    if (!res.headersSent) res.status(500).json({ error: err.message });
-    else {
-      try { res.write(`data: Error: ${err.message}\n\n`); res.write("data: [DONE]\n\n"); res.end(); } catch {}
-    }
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -160,31 +140,21 @@ app.post("/api/chat", async (req, res) => {
 const upload = multer({ dest: path.join(__dirname, "audios/") });
 
 app.post("/api/voz", upload.single("audio"), async (req, res) => {
-  if (!req.file) {
-    console.log("No se recibió archivo de audio");
-    return res.status(400).json({ error: "Archivo de audio requerido" });
-  }
+  if (!req.file) return res.status(400).json({ error: "Archivo de audio requerido" });
 
   try {
     const ext = path.extname(req.file.originalname) || ".webm";
     const tempPath = req.file.path + ext;
     fs.renameSync(req.file.path, tempPath);
 
-    console.log("Archivo de audio guardado:", tempPath);
-
     const transcription = await client.audio.transcriptions.create({
       file: fs.createReadStream(tempPath),
       model: "gpt-4o-mini-transcribe",
     });
 
-    console.log("Transcripción:", transcription.text);
-
     res.json({ text: transcription.text });
-
     fs.unlinkSync(tempPath);
-    console.log("Archivo temporal eliminado");
   } catch (err) {
-    console.error("Error procesando audio:", err);
     res.status(500).json({ error: err.message });
   }
 });
