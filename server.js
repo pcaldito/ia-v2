@@ -157,7 +157,7 @@ app.post("/api/chat", async (req, res) => {
 });
 
 // --- Audio endpoint ---
-const upload = multer({ dest: path.join(__dirname, "uploads/") });
+const upload = multer({ dest: path.join(__dirname, "audios/") });
 
 app.post("/api/voz", upload.single("audio"), async (req, res) => {
   if (!req.file) {
