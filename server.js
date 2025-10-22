@@ -11,67 +11,79 @@ app.use(express.json());
 app.use(express.static("public"));
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT || "Eres un asistente amable y claro.";
+const SISTEMA = process.env.SYSTEM_PROMPT || "Eres un asistente amable y claro.";
 
-let vectorStore = [];
-const VECTOR_FILE = "./vectorStore.json";
+let baseVectores = [];
+const ARCHIVO_VECTORES = "./vectorStore.json";
 
-function cosineSimilarity(a, b) {
-  const dot = a.reduce((sum, val, i) => sum + val * b[i], 0);
-  const magA = Math.sqrt(a.reduce((sum, val) => sum + val * val, 0));
-  const magB = Math.sqrt(b.reduce((sum, val) => sum + val * val, 0));
-  return dot / (magA * magB);
+function similitudCoseno(a, b) {
+  const producto = a.reduce((suma, val, i) => suma + val * b[i], 0);
+  const magA = Math.sqrt(a.reduce((suma, val) => suma + val * val, 0));
+  const magB = Math.sqrt(b.reduce((suma, val) => suma + val * val, 0));
+  if (magA === 0 || magB === 0) return 0;
+  return producto / (magA * magB);
 }
 
 async function cargarDocumentos() {
-  if (fs.existsSync(VECTOR_FILE)) {
-    vectorStore = JSON.parse(fs.readFileSync(VECTOR_FILE, "utf-8"));
-    return;
+  if (fs.existsSync(ARCHIVO_VECTORES)) {
+    try {
+      baseVectores = JSON.parse(fs.readFileSync(ARCHIVO_VECTORES, "utf-8"));
+      if (Array.isArray(baseVectores) && baseVectores.length > 0) return;
+    } catch {
+      baseVectores = [];
+    }
   }
 
-  const files = fs.readdirSync("./docs").filter(f => f.endsWith(".docx"));
-  for (const file of files) {
-    const buffer = fs.readFileSync(`./docs/${file}`);
-    const result = await mammoth.extractRawText({ buffer });
-    const text = result.value;
+  if (!fs.existsSync("./docs")) return;
 
-    for (let i = 0; i < text.length; i += 500) {
-      const chunk = text.slice(i, i + 500);
+  const archivos = fs.readdirSync("./docs").filter(f => f.toLowerCase().endsWith(".docx"));
+  for (const archivo of archivos) {
+    const buffer = fs.readFileSync(`./docs/${archivo}`);
+    const resultado = await mammoth.extractRawText({ buffer });
+    const texto = resultado.value || "";
+
+    const TAMANO_FRAGMENTO = 500;
+    for (let i = 0; i < texto.length; i += TAMANO_FRAGMENTO) {
+      const fragmento = texto.slice(i, i + TAMANO_FRAGMENTO);
+      if (!fragmento.trim()) continue;
       const emb = await client.embeddings.create({
         model: "text-embedding-3-small",
-        input: chunk,
+        input: fragmento,
       });
-      vectorStore.push({
-        id: `${file}-${i}`,
-        text: chunk,
+      baseVectores.push({
+        id: `${archivo}-${i}`,
+        texto: fragmento,
         embedding: emb.data[0].embedding,
-        source: file,
+        fuente: archivo,
       });
     }
   }
-  fs.writeFileSync(VECTOR_FILE, JSON.stringify(vectorStore));
+
+  if (baseVectores.length > 0) {
+    fs.writeFileSync(ARCHIVO_VECTORES, JSON.stringify(baseVectores));
+  }
 }
 await cargarDocumentos();
 
-const DOCUMENT_KEYWORDS = [
+const PALABRAS_DOCUMENTOS = [
   "arquitectura", "gótica",
   "veterinaria", "vet", "animales",
   "league of legends", "lol", "tft", "builds", "campeones"
 ];
 
-function conversacion(question) {
-  const qLower = question.toLowerCase();
-  return DOCUMENT_KEYWORDS.some(k => qLower.includes(k));
+function esConversacionDeDocumento(pregunta) {
+  const texto = (pregunta || "").toLowerCase();
+  return PALABRAS_DOCUMENTOS.some(p => texto.includes(p));
 }
 
 const funciones = [
-  { name: "saluda", keywords: ["saludame", "hola"], execute: () => "¡Hola Pablo! Encantado de saludarte." },
-  { name: "tiempo", keywords: ["tiempo", "clima"], execute: () => "El tiempo en Badajoz es soleado con 25°C." }
+  { nombre: "saluda", palabras: ["saludame", "hola"], ejecutar: () => "Hola Pablo, encantado de saludarte." },
+  { nombre: "tiempo", palabras: ["tiempo", "clima"], ejecutar: () => "El tiempo en Badajoz es soleado con 25°C." }
 ];
 
-function detectFunction(message) {
-  const msgLower = message.toLowerCase();
-  return funciones.find(fn => fn.keywords.some(k => msgLower.includes(k)));
+function detectarFuncion(mensaje) {
+  const texto = (mensaje || "").toLowerCase();
+  return funciones.find(fn => fn.palabras.some(p => texto.includes(p)));
 }
 
 app.post("/api/chat", async (req, res) => {
@@ -79,45 +91,62 @@ app.post("/api/chat", async (req, res) => {
   const ultimoMensaje = messages.filter(m => m.role === "user").slice(-1)[0]?.content || "";
 
   try {
-    const fn = detectFunction(ultimoMensaje);
+    const fn = detectarFuncion(ultimoMensaje);
     if (fn) {
-      return res.json({ text: fn.execute() });
+      return res.json({ text: fn.ejecutar() });
     }
 
-    let context = "";
-    if (conversacion(ultimoMensaje)) {
+    let contexto = "";
+    if (esConversacionDeDocumento(ultimoMensaje) && baseVectores.length > 0) {
       const qEmbedding = await client.embeddings.create({
         model: "text-embedding-3-small",
         input: ultimoMensaje,
       });
       const queryVector = qEmbedding.data[0].embedding;
-      const scored = vectorStore.map(c => ({ ...c, score: cosineSimilarity(queryVector, c.embedding) }));
-      const topChunks = scored.sort((a, b) => b.score - a.score).slice(0, 3);
-      context = topChunks.map(c => c.text).join("\n");
+      const puntuados = baseVectores.map(c => ({
+        ...c,
+        score: similitudCoseno(queryVector, c.embedding),
+      }));
+      const mejores = puntuados.sort((a, b) => b.score - a.score).slice(0, 3);
+      contexto = mejores.map(c => c.texto).join("\n");
     }
 
-    const inputMessages = [
-      { role: "system", content: SYSTEM_PROMPT },
+    const mensajesEntrada = [
+      { role: "system", content: SISTEMA },
       ...messages.map(m => ({ role: m.role, content: m.content })),
     ];
 
-    if (context) {
-      inputMessages.push({ role: "system", content: `Información relevante de documentos:\n${context}` });
+    if (contexto) {
+      mensajesEntrada.push({ role: "system", content: `Información de documentos:\n${contexto}` });
     }
 
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
+    res.flushHeaders && res.flushHeaders();
 
-    // Envío de respuesta en streaming
     const stream = await client.responses.stream({
       model: "gpt-4o-mini",
-      input: inputMessages
+      input: mensajesEntrada
     });
 
-    for await (const event of stream) {
-      if (event.type === "response.output_text.delta") {
-        res.write(`data: ${event.delta}\n\n`);
+    for await (const evento of stream) {
+      if (evento.type === "response.output_text.delta") {
+        const texto = String(evento.delta || "").replace(/\r/g, "");
+        if (!texto) continue;
+        const lineas = texto.split("\n");
+        for (const ln of lineas) {
+          res.write(`data: ${ln}\n\n`);
+        }
+      } else if (evento.type === "response.refusal.delta") {
+        const texto = String(evento.delta || "").replace(/\r/g, "");
+        const lineas = texto.split("\n");
+        for (const ln of lineas) {
+          res.write(`data: ${ln}\n\n`);
+        }
+      } else if (evento.type === "response.error") {
+        const errMsg = evento.error?.message || "Error interno en el stream";
+        res.write(`data: ${errMsg}\n\n`);
       }
     }
 
@@ -125,8 +154,15 @@ app.post("/api/chat", async (req, res) => {
     res.end();
 
   } catch (err) {
-    console.error("Error en /api/chat:", err);
-    res.status(500).json({ error: err.message });
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    } else {
+      try {
+        res.write(`data: Error: ${err.message}\n\n`);
+        res.write("data: [DONE]\n\n");
+        res.end();
+      } catch {}
+    }
   }
 });
 

@@ -1,112 +1,117 @@
 let historial = [];
 
-// --- Referencias ---
-const input = document.getElementById("chati");
-const div = document.getElementById("respuesta");
-const enviarBtn = document.getElementById("enviar");
-const micBtn = document.getElementById("mic");
+// --- Referencias del DOM ---
+const entrada = document.getElementById("chati");
+const contenedor = document.getElementById("respuesta");
+const botonEnviar = document.getElementById("enviar");
+const botonMicro = document.getElementById("mic");
 
 // --- Configurar reconocimiento de voz ---
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-let recognition;
-if (SpeechRecognition) {
-  recognition = new SpeechRecognition();
-  recognition.lang = 'es-ES';
-  recognition.interimResults = false;
-  recognition.continuous = false;
+const ReconocimientoVoz = window.SpeechRecognition || window.webkitSpeechRecognition;
+let reconocimiento;
 
-  recognition.onstart = () => micBtn.classList.add("listening");
-  recognition.onend = () => micBtn.classList.remove("listening");
+if (ReconocimientoVoz) {
+  reconocimiento = new ReconocimientoVoz();
+  reconocimiento.lang = 'es-ES';
+  reconocimiento.interimResults = false;
+  reconocimiento.continuous = false;
 
-  recognition.onresult = (event) => {
-    const transcript = Array.from(event.results)
-      .map(result => result[0].transcript)
+  reconocimiento.onstart = () => botonMicro.classList.add("escuchando");
+  reconocimiento.onend = () => botonMicro.classList.remove("escuchando");
+
+  reconocimiento.onresult = (evento) => {
+    const texto = Array.from(evento.results)
+      .map(resultado => resultado[0].transcript)
       .join('');
-    input.value = transcript;
+    entrada.value = texto;
     enviarMensaje();
   };
 
-  recognition.onerror = (e) => console.error("Error micrófono:", e.error);
+  reconocimiento.onerror = (e) => console.error("Error micrófono:", e.error);
 }
 
 // --- Botón micrófono ---
-micBtn.addEventListener("click", () => {
-  if (recognition) recognition.start();
+botonMicro.addEventListener("click", () => {
+  if (reconocimiento) reconocimiento.start();
 });
 
 // --- Botón enviar ---
-enviarBtn.addEventListener("click", () => enviarMensaje());
-input.addEventListener("keypress", (e) => {
+botonEnviar.addEventListener("click", () => enviarMensaje());
+entrada.addEventListener("keypress", (e) => {
   if (e.key === "Enter") enviarMensaje();
 });
 
-// --- Función enviar mensaje (tu código streaming intacto) ---
+// --- Función principal: enviar mensaje ---
 async function enviarMensaje() {
-  const pregunta = input.value.trim();
+  const pregunta = entrada.value.trim();
   if (!pregunta) return;
 
-  div.innerHTML += `<div class="mensaje usuario">${pregunta}</div>`;
-  div.scrollTop = div.scrollHeight;
-  input.value = "";
+  // Mostrar mensaje del usuario
+  contenedor.innerHTML += `<div class="mensaje usuario">${pregunta}</div>`;
+  contenedor.scrollTop = contenedor.scrollHeight;
+  entrada.value = "";
 
-  const thinkingDiv = document.createElement("div");
-  thinkingDiv.className = "mensaje ia";
-  div.appendChild(thinkingDiv);
-  div.scrollTop = div.scrollHeight;
+  // Crear elemento para mostrar la respuesta de la IA
+  const mensajeIA = document.createElement("div");
+  mensajeIA.className = "mensaje ia";
+  contenedor.appendChild(mensajeIA);
+  contenedor.scrollTop = contenedor.scrollHeight;
 
   historial.push({ role: "user", content: pregunta });
 
   try {
-    const res = await fetch("/api/chat", {
+    const respuesta = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages: historial }),
     });
 
-    const contentType = res.headers.get("content-type") || "";
+    const tipoContenido = respuesta.headers.get("content-type") || "";
 
-    if (contentType.includes("application/json")) {
-      const data = await res.json();
-      thinkingDiv.textContent = data.text;
+    // Si es una respuesta directa (sin streaming)
+    if (tipoContenido.includes("application/json")) {
+      const data = await respuesta.json();
+      mensajeIA.textContent = data.text;
       historial.push({ role: "assistant", content: data.text });
       return;
     }
 
-    // --- Streaming robusto ---
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder("utf-8");
+    // --- Manejo de streaming SSE ---
+    const lector = respuesta.body.getReader();
+    const decodificador = new TextDecoder("utf-8");
     let buffer = "";
     let respuestaCompleta = "";
-    let ultimoChar = "";
+    let ultimoCaracter = "";
 
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await lector.read();
       if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+      buffer += decodificador.decode(value, { stream: true });
+      const lineas = buffer.split("\n");
+      buffer = lineas.pop() || "";
 
-      for (const line of lines) {
-        if (!line.startsWith("data:")) continue;
-        let fragment = line.slice(5).trim();
-        if (fragment === "[DONE]") continue;
+      for (const linea of lineas) {
+        if (!linea.startsWith("data:")) continue;
+        let fragmento = linea.slice(5).trim();
+        if (fragmento === "[DONE]") continue;
 
-        // Saltos de línea
-        fragment = fragment.replace(/###/g, "\n");
-        
-        if (ultimoChar && /[a-zA-Z0-9áéíóúñ]/.test(ultimoChar) && /^[a-zA-Z0-9áéíóúñ]/.test(fragment[0])) {
-          fragment = " " + fragment;
+        // Manejar saltos de línea
+        fragmento = fragmento.replace(/###/g, "\n");
+
+        // Espaciado automático entre palabras
+        if (ultimoCaracter && /[a-zA-Z0-9áéíóúñ]/.test(ultimoCaracter) && /^[a-zA-Z0-9áéíóúñ]/.test(fragmento[0])) {
+          fragmento = " " + fragmento;
         }
 
-        if (respuestaCompleta && /[.,;:!¡¿?""'*+-]$/.test(respuestaCompleta) && fragment[0] && !/[\s\n]/.test(fragment[0])) {
-          fragment = " " + fragment;
+        if (respuestaCompleta && /[.,;:!¡¿?""'*+-]$/.test(respuestaCompleta) && fragmento[0] && !/[\s\n]/.test(fragmento[0])) {
+          fragmento = " " + fragmento;
         }
 
-        thinkingDiv.textContent += fragment;
-        ultimoChar = fragment.slice(-1);
-        respuestaCompleta += fragment;
-        div.scrollTop = div.scrollHeight;
+        mensajeIA.textContent += fragmento;
+        ultimoCaracter = fragmento.slice(-1);
+        respuestaCompleta += fragmento;
+        contenedor.scrollTop = contenedor.scrollHeight;
       }
     }
 
@@ -114,9 +119,9 @@ async function enviarMensaje() {
     console.log("Respuesta completa:", respuestaCompleta);
 
   } catch (error) {
-    thinkingDiv.textContent = "Error al conectar con el servidor";
+    mensajeIA.textContent = "Error al conectar con el servidor";
     console.error("Error:", error);
   }
 
-  div.scrollTop = div.scrollHeight;
+  contenedor.scrollTop = contenedor.scrollHeight;
 }
