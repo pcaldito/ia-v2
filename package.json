@@ -12,13 +12,18 @@
   "license": "ISC",
   "dependencies": {
     "@chroma-core/default-embed": "^0.1.8",
+    "@dqbd/tiktoken": "^1.0.22",
+    "@elevenlabs/elevenlabs-js": "^2.20.1",
     "chroma": "^0.0.1",
     "chromadb": "^3.0.17",
     "dotenv": "^17.2.3",
+    "elevenlabs": "^1.59.0",
     "express": "^5.1.0",
     "mammoth": "^1.11.0",
     "multer": "^2.0.2",
     "node-fetch": "^3.3.2",
-    "openai": "^6.3.0"
+    "openai": "^6.3.0",
+    "tiktoken": "^1.0.22",
+    "wink-tokenizer": "^5.3.0"
   }
 }

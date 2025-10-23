@@ -6,6 +6,7 @@ import OpenAI from "openai";
 import multer from "multer";
 import path from "path";
 import { fileURLToPath } from "url";
+import { ElevenLabsClient, play } from '@elevenlabs/elevenlabs-js';
 
 dotenv.config();
 
@@ -17,7 +18,7 @@ app.use(express.json());
 app.use(express.static("public"));
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const SISTEMA = process.env.SYSTEM_PROMPT || "Eres un asistente amable y claro.";
+const SISTEMA = process.env.SYSTEM_PROMPT;
 
 // --- Embeddings de documentos ---
 let baseVectores = [];
@@ -93,14 +94,25 @@ function detectarFuncion(mensaje) {
   return funciones.find(fn => fn.palabras.some(p => texto.includes(p)));
 }
 
-// --- Chat endpoint (respuesta completa) ---
+// --- Chat endpoint con SSE y ElevenLabs ---
 app.post("/api/chat", async (req, res) => {
   const { messages = [] } = req.body;
   const ultimoMensaje = messages.filter(m => m.role === "user").slice(-1)[0]?.content || "";
 
   try {
     const fn = detectarFuncion(ultimoMensaje);
-    if (fn) return res.json({ text: fn.ejecutar() });
+    if (fn) {
+      const respuesta = fn.ejecutar();
+      // Convertir a voz con ElevenLabs
+      const elevenlabs = new ElevenLabsClient({ apiKey: process.env.ELEVENLABS_API_KEY });
+      const audio = await elevenlabs.textToSpeech.convert('JBFqnCBsd6RMkjVDRZzb', {
+        text: respuesta,
+        modelId: 'eleven_multilingual_v2',
+        outputFormat: 'mp3_44100_128',
+      });
+      await play(audio);
+      return res.json({ text: respuesta });
+    }
 
     let contexto = "";
     if (esConversacionDeDocumento(ultimoMensaje) && baseVectores.length > 0) {
@@ -123,21 +135,52 @@ app.post("/api/chat", async (req, res) => {
     ];
     if (contexto) mensajesEntrada.push({ role: "system", content: `Información de documentos:\n${contexto}` });
 
-    const respuesta = await client.responses.create({
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders && res.flushHeaders();
+
+    const stream = await client.responses.stream({
       model: "gpt-4o-mini",
       input: mensajesEntrada
     });
 
-    const textoFinal = respuesta.output_text || "No se pudo generar respuesta";
-    res.json({ text: textoFinal });
+    let respuestaCompleta = "";
+
+    for await (const evento of stream) {
+      if (evento.type === "response.output_text.delta" || evento.type === "response.refusal.delta") {
+        const texto = String(evento.delta || "").replace(/\r/g, "");
+        if (!texto) continue;
+        respuestaCompleta += texto;
+        res.write(`data: ${texto}\n\n`);
+      } else if (evento.type === "response.error") {
+        const errMsg = evento.error?.message || "Error interno en el stream";
+        res.write(`data: ${errMsg}\n\n`);
+      }
+    }
+
+    // Reproducir audio de la respuesta completa
+    const elevenlabs = new ElevenLabsClient({ apiKey: process.env.ELEVENLABS_API_KEY });
+    const audio = await elevenlabs.textToSpeech.convert('JBFqnCBsd6RMkjVDRZzb', {
+      text: respuestaCompleta,
+      modelId: 'eleven_multilingual_v2',
+      outputFormat: 'mp3_44100_128',
+    });
+    await play(audio);
+
+    res.write("data: [DONE]\n\n");
+    res.end();
 
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+    else {
+      try { res.write(`data: Error: ${err.message}\n\n`); res.write("data: [DONE]\n\n"); res.end(); } catch {}
+    }
   }
 });
 
 // --- Audio endpoint ---
-const upload = multer({ dest: path.join(__dirname, "audios/") });
+const upload = multer({ dest: path.join(__dirname, "uploads/") });
 
 app.post("/api/voz", upload.single("audio"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "Archivo de audio requerido" });
@@ -153,6 +196,7 @@ app.post("/api/voz", upload.single("audio"), async (req, res) => {
     });
 
     res.json({ text: transcription.text });
+
     fs.unlinkSync(tempPath);
   } catch (err) {
     res.status(500).json({ error: err.message });
