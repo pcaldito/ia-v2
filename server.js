@@ -6,7 +6,9 @@ import OpenAI from "openai";
 import multer from "multer";
 import path from "path";
 import { fileURLToPath } from "url";
-import { ElevenLabsClient, play } from '@elevenlabs/elevenlabs-js';
+import { ElevenLabsClient, play } from "@elevenlabs/elevenlabs-js";
+import https from "https";
+import selfsigned from "selfsigned";
 
 dotenv.config();
 
@@ -17,6 +19,26 @@ const app = express();
 app.use(express.json());
 app.use(express.static("public"));
 
+// --- 🔒 Generación automática de certificados SSL ---
+if (!fs.existsSync("./certs")) fs.mkdirSync("./certs");
+const certPath = "./certs/cert.pem";
+const keyPath = "./certs/key.pem";
+
+if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+  const pems = selfsigned.generate(
+    [{ name: "commonName", value: "localhost" }],
+    { days: 365 }
+  );
+  fs.writeFileSync(certPath, pems.cert);
+  fs.writeFileSync(keyPath, pems.private);
+}
+
+const options = {
+  key: fs.readFileSync(keyPath),
+  cert: fs.readFileSync(certPath),
+};
+
+// --- OPENAI + ElevenLabs setup ---
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const SISTEMA = process.env.SYSTEM_PROMPT;
 
@@ -103,7 +125,6 @@ app.post("/api/chat", async (req, res) => {
     const fn = detectarFuncion(ultimoMensaje);
     if (fn) {
       const respuesta = fn.ejecutar();
-      // Convertir a voz con ElevenLabs
       const elevenlabs = new ElevenLabsClient({ apiKey: process.env.ELEVENLABS_API_KEY });
       const audio = await elevenlabs.textToSpeech.convert('JBFqnCBsd6RMkjVDRZzb', {
         text: respuesta,
@@ -142,7 +163,7 @@ app.post("/api/chat", async (req, res) => {
 
     const stream = await client.responses.stream({
       model: "gpt-4o-mini",
-      input: mensajesEntrada
+      input: mensajesEntrada,
     });
 
     let respuestaCompleta = "";
@@ -159,7 +180,6 @@ app.post("/api/chat", async (req, res) => {
       }
     }
 
-    // Reproducir audio de la respuesta completa
     const elevenlabs = new ElevenLabsClient({ apiKey: process.env.ELEVENLABS_API_KEY });
     const audio = await elevenlabs.textToSpeech.convert('JBFqnCBsd6RMkjVDRZzb', {
       text: respuestaCompleta,
@@ -170,7 +190,6 @@ app.post("/api/chat", async (req, res) => {
 
     res.write("data: [DONE]\n\n");
     res.end();
-
   } catch (err) {
     if (!res.headersSent) res.status(500).json({ error: err.message });
     else {
@@ -196,12 +215,13 @@ app.post("/api/voz", upload.single("audio"), async (req, res) => {
     });
 
     res.json({ text: transcription.text });
-
     fs.unlinkSync(tempPath);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// --- Servidor ---
-app.listen(3000, () => console.log("Servidor activo en http://localhost:3000"));
+// --- Servidor HTTPS ---
+https.createServer(options, app).listen(5000, () => {
+  console.log("Servidor seguro en https://192.168.1.68:5000");
+});
